@@ -6,7 +6,7 @@ import sys
 import os
 import socket
 import json
-from scraper import run_scraper as run_batch
+from scraper import run_scraper
 from scraper import scrape_once, load_database, save_database
 from settings import get
 from generate_pages import main_page
@@ -38,78 +38,27 @@ def serve_main_page(): return main_page()
 @app.route('/logo.jpg')
 def logo(): return send_from_directory(os.path.join(ROOT_DIR, 'resources'), 'logo.jpg')
 
-@app.route('/submit', methods=['POST'])
-def submit():
-    global result_data
-    try:
-        data = request.get_json()
-        if not data.get('company_name'):
-            return jsonify({'success': False, 'message': 'Company name is required'})
-        result_data = data
-        return jsonify({'success': True})
-    except Exception as e: return jsonify({'success': False, 'message': str(e)})
-
 @app.route('/api/run/<function_name>', methods=['POST'])
 def run_function(function_name):
     global result_data
     try:
-        data = request.get_json()
-        
-        function_to_mode = {
-            'run_hist_scraper': 'hist',
-            'run_prc_scraper': 'prc'
-        }
-        
-        mode = function_to_mode.get(function_name)
-        if not mode:
-            return jsonify({'success': False, 'message': f'Unknown function: {function_name}'})
-        
-        company_name = (data or {}).get('company_name', '').strip() if isinstance(data, dict) else ''
-        
-        if not company_name:
-            # No company provided: run batch (Excel-driven)
-            thread = threading.Thread(target=run_batch, daemon=True)
-            thread.start()
-            return jsonify({'success': True, 'message': 'Batch run started'})
-        else:
-            # Single company scraping via scrape_once, then append to DB
-            from_date = (data or {}).get('from_date', '20240101').replace('-', '').replace('/', '')
-            to_date = (data or {}).get('to_date', '20241231').replace('-', '').replace('/', '')
-            keyword = (data or {}).get('keyword') or company_name
-            cfg = {
-                'from_date': from_date,
-                'to_date': to_date,
-                'company': company_name,
-                'keyword': keyword
-            }
-            def run_single():
-                rows = scrape_once(cfg) or []
-                db = load_database()
-                aggregated = db.get('rows', [])
-                aggregated.extend(rows)
-                save_database(aggregated)
-            thread = threading.Thread(target=run_single, daemon=True)
-            thread.start()
-            return jsonify({'success': True, 'message': f'Single run for {company_name} started'})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        request.get_json()
+        thread = threading.Thread(target=run_scraper, daemon=True)
+        thread.start()
+        return jsonify({'success': True, 'message': 'Batch run started'})
+    except Exception as e: return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/discard-company-data', methods=['POST'])
 def discard_company_data():
     try:      
         db_path = os.path.join(ROOT_DIR, 'database.json')
-        database = {}
         with open(db_path, 'w', encoding='utf-8') as f:
-            json.dump(database, f, ensure_ascii=False, indent=2)
-        
+            json.dump({}, f, ensure_ascii=False, indent=2)
         return jsonify({
             'success': True, 
             'message': f'Successfully deleted all data from database'
         })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+    except Exception as e: return jsonify({'success': False, 'message': str(e)}), 500
 
 def start_server():
     global server_running, current_port
@@ -155,19 +104,11 @@ def main():
     try:
         while True:
             user_input = get_user_input()
-            if not user_input:
-                break
+            if not user_input: break
             try:
-                mode = user_input.get('mode', 'hist')
-                if mode not in ['hist', 'prc']:
-                    mode = 'hist'
-                
-                user_input['mode'] = mode
-                
-                print(f"✅ Starting {mode} scraper...")
+                print(f"✅ Starting scraper...")
                 run_scraper(user_input)
-                print(f"✅ {mode.upper()} scraper completed successfully!")
-                
+                print(f"✅ Scraper completed successfully!")
             except Exception as e:
                 print(f"❌ Scraper failed: {e}")
                 import traceback
